@@ -12,8 +12,8 @@ from datetime import datetime
 # Base de dados simples de usuários autorizados da Gross
 USUARIOS_AUTORIZADOS = {
     "daniel.reis@gross.com.br": "gross2026",
-    "operacional@gross.com.br": "gross123",
-    "fiscal@gross.com.br": "nfe2026"
+    "rute.silva@gross.com.br": "gross123",
+    "aryelle.cristine@gross.com.br": "nfe2026"
 }
 
 def verificar_autenticacao():
