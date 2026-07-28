@@ -19,7 +19,6 @@ USUARIOS_AUTORIZADOS = {
 }
 
 def verificar_autenticacao():
-    # Inicializa as variáveis de controle no session_state
     if 'autenticado' not in st.session_state:
         st.session_state.autenticado = False
     if 'usuario_email' not in st.session_state:
@@ -27,17 +26,14 @@ def verificar_autenticacao():
     if 'tempo_login' not in st.session_state:
         st.session_state.tempo_login = None
 
-    # Verifica se a sessão expirou (se passaram mais de 3 dias)
     if st.session_state.autenticado and st.session_state.tempo_login:
         tempo_decorrido = datetime.now() - st.session_state.tempo_login
         if tempo_decorrido > timedelta(days=3):
-            # Passou de 3 dias: derruba a sessão
             st.session_state.autenticado = False
             st.session_state.usuario_email = ""
             st.session_state.tempo_login = None
             st.warning("Sua sessão expirou após 3 dias. Por favor, faça login novamente.")
 
-    # Se não estiver autenticado, exibe a tela de login
     if not st.session_state.autenticado:
         st.set_page_config(page_title="Login - Laboratório Gross", layout="centered")
         st.title("🔒 Laboratório Gross - Acesso Restrito")
@@ -50,7 +46,7 @@ def verificar_autenticacao():
             if email_input in USUARIOS_AUTORIZADOS and USUARIOS_AUTORIZADOS[email_input] == senha_input:
                 st.session_state.autenticado = True
                 st.session_state.usuario_email = email_input
-                st.session_state.tempo_login = datetime.now() # Registra o momento exato do login
+                st.session_state.tempo_login = datetime.now()
                 st.rerun()
             else:
                 st.error("E-mail ou senha incorretos. Verifique seus dados.")
@@ -389,8 +385,9 @@ with aba_relatorios:
             with tab_a:
                 st.markdown("### Quantidade de Pré-Notas Geradas por Ano")
                 df_ano = df_hist.groupby("Ano")["Nota"].count().reset_index().rename(columns={"Nota": "Total Pré-Notas Geradas"})
+                # Corrigido para indexar por 'Ano' em vez de 'Data'
                 st.dataframe(df_ano, use_container_width=True)
-                st.bar_chart(df_ano.set_index("Data"))
+                st.bar_chart(df_ano.set_index("Ano"))
                 
             with tab_g:
                 st.markdown("### Histórico Completo de Pré-Notas Emitidas")
