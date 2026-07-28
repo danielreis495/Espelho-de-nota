@@ -4,11 +4,11 @@ import pandas as pd
 from fpdf import FPDF
 import tempfile
 
-# 1. Função para remover as tags complexas do XML
+# Função para remover as tags complexas do XML
 def limpar_namespace(tag):
     return tag.split('}')[-1] if '}' in tag else tag
 
-# 2. Leitor avançado: Captura descontos, ICMS-ST e Número da Nota
+# Leitor avançado: Captura descontos, ICMS-ST e Número da Nota
 def processar_xml_nf(arquivo_xml):
     tree = ET.parse(arquivo_xml)
     root = tree.getroot()
@@ -16,7 +16,6 @@ def processar_xml_nf(arquivo_xml):
     numero_nota = "Não encontrado"
     produtos = []
     
-    # Raciocínio: Busca a seção de identificação (ide) e pega o número (nNF)
     for ide in root.iter():
         if limpar_namespace(ide.tag) == 'ide':
             for nNF in ide.iter():
@@ -25,7 +24,6 @@ def processar_xml_nf(arquivo_xml):
                     break
             break
             
-    # Raciocínio: Vasculha os dados de preço e impostos do produto
     for det in root.iter():
         if limpar_namespace(det.tag) == 'det':
             prod_info = {
@@ -51,111 +49,128 @@ def processar_xml_nf(arquivo_xml):
             
     return pd.DataFrame(produtos), numero_nota
 
-# 3. Função para desenhar o arquivo PDF
+# Função para desenhar o arquivo PDF
 def gerar_pdf(df, numero_nota):
-    # Cria folha A4 em modo Paisagem (L)
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    # Raciocínio: Configura a fonte e escreve o título
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"CÁLCULO NOTA FISCAL - VENDA: {numero_nota}", ln=True, align='C')
-    pdf.ln(5) # Pula linha
+    pdf.cell(0, 10, f"PRÉ-NOTA DE DEVOLUÇÃO - DOC: {numero_nota}", ln=True, align='C')
+    pdf.ln(5) 
     
-    # Raciocínio: Configura a largura das 13 colunas para caber na folha
     pdf.set_font("Arial", 'B', 7)
     larguras = [40, 12, 18, 18, 18, 15, 18, 22, 22, 18, 15, 20, 20]
     colunas = df.columns.tolist()
     
-    # Imprime os cabeçalhos
     for i, col in enumerate(colunas):
         pdf.cell(larguras[i], 8, txt=str(col), border=1, align='C')
     pdf.ln()
     
-    # Imprime os dados (linhas)
     pdf.set_font("Arial", size=7)
     for index, row in df.iterrows():
         for i, item in enumerate(row):
-            # Limita caracteres de texto e formata números com 2 casas decimais
             texto = f"{item:.2f}" if isinstance(item, (int, float)) else str(item)[:22]
             pdf.cell(larguras[i], 8, txt=texto, border=1, align='C')
         pdf.ln()
     
-    # Cria arquivo invisível e devolve os dados para download
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         pdf.output(tmp.name)
         with open(tmp.name, "rb") as f:
             return f.read()
 
-# 4. Construção da Interface do Usuário
-st.set_page_config(page_title="Gerador de Devolução NFe", layout="wide")
-st.title("Espelho e Validador de NFD")
+# Construção da Interface do Usuário (Layout Pré-Nota)
+st.set_page_config(page_title="Emissão de Devolução", layout="wide")
+st.title("📄 Sistema de Pré-Nota de Devolução")
+st.markdown("---")
 
+# Seção de Upload
 col1, col2 = st.columns(2)
 with col1:
-    nf_origem = st.file_uploader("1. Suba o XML da NF de Origem", type=["xml"])
+    nf_origem = st.file_uploader("1. Anexe o XML da Nota Fiscal de Origem", type=["xml"])
 with col2:
-    nfd_devolucao = st.file_uploader("2. Suba o XML da NFD (Opcional)", type=["xml"])
+    nfd_devolucao = st.file_uploader("2. Anexe o XML da NFD para conferência (Opcional)", type=["xml"])
 
 if nf_origem:
-    st.success("NF de Origem carregada com sucesso!")
     df_produtos, numero_nota = processar_xml_nf(nf_origem)
     
-    st.markdown(f"### Número da Nota: **{numero_nota}**")
-    st.markdown("### Selecione as Quantidades para o Espelho da Devolução")
+    st.success("Documento processado com sucesso!")
+    st.markdown(f"#### Referência: Nota Fiscal Nº `{numero_nota}`")
+    st.write("Insira as quantidades dos itens que retornarão ao estoque:")
     
     espelho_itens = []
     
-    for index, linha in df_produtos.iterrows():
-        nome = linha['Nome']
-        qtd_orig = linha['Qtd Original']
-        v_unit = linha['Valor Unitário']
-        v_base_orig = linha['Valor Base']
-        icms_orig = linha['ICMS Original']
-        
-        qtd_dev = st.number_input(f"{nome} (Máx: {qtd_orig})", min_value=0.0, max_value=float(qtd_orig), value=0.0, step=1.0)
-        
-        if qtd_dev > 0:
-            fator_proporcao = qtd_dev / qtd_orig
-            valor_item_dev = qtd_dev * v_unit
-            icms_item_dev = icms_orig * fator_proporcao
+    # Variáveis para somar os totais da nota
+    valor_liquido_total = 0.0
+    icms_st_total = 0.0
+    
+    # Corpo da Nota: Seleção de Produtos
+    with st.container():
+        for index, linha in df_produtos.iterrows():
+            nome = linha['Nome']
+            qtd_orig = linha['Qtd Original']
+            v_unit = linha['Valor Unitário']
+            v_base_orig = linha['Valor Base']
+            icms_orig = linha['ICMS Original']
             
-            # Simulando regras contábeis básicas para preencher o layout desejado
-            repasse = valor_item_dev * 0.8925
-            desc = repasse * 0.08
-            vl_liq = repasse - desc
+            qtd_dev = st.number_input(f"📦 {nome} (Qtd. na NF: {qtd_orig})", min_value=0.0, max_value=float(qtd_orig), value=0.0, step=1.0)
             
-            espelho_itens.append({
-                "PRODUTO": nome,
-                "QTE": qtd_dev,
-                "VL UNIT": v_unit,
-                "VL TOTAL": valor_item_dev,
-                "REPASSE": repasse,
-                "DESC": desc,
-                "VL LIQ": vl_liq,
-                "VL UNIT (PMC)": 0.0,
-                "VL TOTAL(PMC)": 0.0,
-                "REDUÇÃO": 0.0,
-                "BASE": v_base_orig * fator_proporcao,
-                "ALÍQUOTA": 18.0,
-                "ICMS ST": icms_item_dev
-            })
+            if qtd_dev > 0:
+                fator_proporcao = qtd_dev / qtd_orig
+                valor_item_dev = qtd_dev * v_unit
+                icms_item_dev = icms_orig * fator_proporcao
+                
+                repasse = valor_item_dev * 0.8925
+                desc = repasse * 0.08
+                vl_liq = repasse - desc
+                
+                # Incrementando os totais gerais da nota
+                valor_liquido_total += vl_liq
+                icms_st_total += icms_item_dev
+                
+                espelho_itens.append({
+                    "PRODUTO": nome,
+                    "QTE": qtd_dev,
+                    "VL UNIT": v_unit,
+                    "VL TOTAL": valor_item_dev,
+                    "REPASSE": repasse,
+                    "DESC": desc,
+                    "VL LIQ": vl_liq,
+                    "VL UNIT (PMC)": 0.0,
+                    "VL TOTAL(PMC)": 0.0,
+                    "REDUÇÃO": 0.0,
+                    "BASE": v_base_orig * fator_proporcao,
+                    "ALÍQUOTA": 18.0,
+                    "ICMS ST": icms_item_dev
+                })
 
-    # 5. Exibição dos Resultados e Botão de Download
+    # Rodapé: Exibição da Tabela e Totais
     if espelho_itens:
         df_final = pd.DataFrame(espelho_itens)
         
         st.markdown("---")
-        st.subheader("Resumo do Espelho de Devolução")
+        st.markdown("### Resumo dos Itens Devolvidos")
+        st.dataframe(df_final.style.format(precision=2), use_container_width=True)
         
-        # Exibe a tabela replicando a estrutura da planilha Excel
-        st.dataframe(df_final, use_container_width=True)
+        st.markdown("---")
+        st.markdown("### Totais da Devolução")
         
-        # Gera o botão e aciona o motor de PDF
+        # Painel contábil dividido em 3 colunas
+        col_t1, col_t2, col_t3 = st.columns(3)
+        with col_t1:
+            st.metric(label="Volume de Itens Diferentes", value=len(espelho_itens))
+        with col_t2:
+            st.metric(label="Total de ICMS-ST Calculado", value=f"R$ {icms_st_total:.2f}")
+        with col_t3:
+            st.metric(label="VALOR LÍQUIDO TOTAL", value=f"R$ {valor_liquido_total:.2f}")
+        
+        st.markdown("---")
+        
+        # Botão destacado
         pdf_pronto = gerar_pdf(df_final, numero_nota)
         st.download_button(
-            label="📄 Gerar PDF da Nota",
+            label="📄 Emitir Pré-Nota em PDF",
             data=pdf_pronto,
-            file_name=f"Calculo_NF_{numero_nota}.pdf",
-            mime="application/pdf"
+            file_name=f"Pre_Nota_Devolucao_{numero_nota}.pdf",
+            mime="application/pdf",
+            type="primary" 
         )
