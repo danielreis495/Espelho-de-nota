@@ -8,14 +8,19 @@ import tempfile
 def limpar_namespace(tag):
     return tag.split('}')[-1] if '}' in tag else tag
 
-# 2. Leitor rigoroso do XML: Extrai apenas o que está declarado na nota
+# 2. Leitor rigoroso do XML: Extrai dados fiscais, cliente, transporte e produtos
 def processar_xml_nf(arquivo_xml):
     tree = ET.parse(arquivo_xml)
     root = tree.getroot()
     
     numero_nota = "Não encontrado"
+    cliente_nome = "Não informado"
+    cidade = ""
+    uf = ""
+    transportadora = "Não informada"
     produtos = []
     
+    # Captura o número da nota
     for ide in root.iter():
         if limpar_namespace(ide.tag) == 'ide':
             for nNF in ide.iter():
@@ -24,6 +29,25 @@ def processar_xml_nf(arquivo_xml):
                     break
             break
             
+    # Captura dados do Cliente (Destinatário) e Localidade
+    for dest in root.iter():
+        if limpar_namespace(dest.tag) == 'dest':
+            for sub in dest.iter():
+                tag = limpar_namespace(sub.tag)
+                if tag == 'xNome': cliente_nome = sub.text
+                elif tag == 'xMun': cidade = sub.text
+                elif tag == 'UF': uf = sub.text
+                
+    # Captura dados da Transportadora
+    for transp in root.iter():
+        if limpar_namespace(transp.tag) == 'transporta':
+            for sub in transp.iter():
+                if limpar_namespace(sub.tag) == 'xNome':
+                    transportadora = sub.text
+                    break
+            break
+            
+    # Captura os produtos da nota
     for det in root.iter():
         if limpar_namespace(det.tag) == 'det':
             prod_info = {
@@ -47,19 +71,35 @@ def processar_xml_nf(arquivo_xml):
             prod_info['Valor Base'] = prod_info['Valor Total Item'] - prod_info['Desconto']
             produtos.append(prod_info)
             
-    return pd.DataFrame(produtos), numero_nota
+    infos_nota = {
+        "numero_nota": numero_nota,
+        "cliente": cliente_nome,
+        "cidade": cidade,
+        "uf": uf,
+        "transportadora": transportadora
+    }
+            
+    return pd.DataFrame(produtos), infos_nota
 
-# 3. Gerador de PDF alinhado aos dados reais
-def gerar_pdf(df, numero_nota, valor_liq_total, icms_total):
+# 3. Gerador de PDF incluindo os dados do cliente e transportadora
+def gerar_pdf(df, infos, valor_liq_total, icms_total):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
+    # Cabeçalho
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 8, "SISTEMA DE PRÉ-NOTA DE DEVOLUÇÃO", ln=True, align='C')
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(0, 6, f"Nota Fiscal de Origem Nº: {numero_nota}", ln=True, align='C')
-    pdf.ln(5)
+    pdf.cell(0, 6, f"Nota Fiscal de Origem Nº: {infos['numero_nota']}", ln=True, align='C')
+    pdf.ln(3)
     
+    # Bloco de Informações (Cliente, Destino e Transportadora)
+    pdf.set_font("Arial", 'B', 9)
+    pdf.cell(0, 5, f"Cliente: {infos['cliente'][:50]}", ln=True)
+    pdf.cell(0, 5, f"Destino: {infos['cidade']} - {infos['uf']} | Transportadora: {infos['transportadora']}", ln=True)
+    pdf.ln(4)
+    
+    # Tabela de Itens
     pdf.set_font("Arial", 'B', 8)
     larguras = [70, 15, 25, 30, 25, 25, 30, 25]
     colunas = df.columns.tolist()
@@ -93,19 +133,23 @@ st.set_page_config(page_title="Emissão de Devolução", layout="wide")
 st.title("📄 Sistema de Pré-Nota de Devolução")
 st.markdown("---")
 
-# Apenas o upload da nota de origem (campo único)
 nf_origem = st.file_uploader("Anexe o XML da Nota Fiscal de Origem", type=["xml"])
 
 if nf_origem:
-    df_produtos, numero_nota = processar_xml_nf(nf_origem)
+    df_produtos, infos_nota = processar_xml_nf(nf_origem)
     
     st.success("Documento processado com sucesso!")
-    st.markdown(f"#### Referência: Nota Fiscal Nº `{numero_nota}`")
+    
+    # Exibindo dados organizados na tela
+    st.markdown(f"#### Nota Fiscal Nº `{infos_nota['numero_nota']}`")
+    st.info(f"**Cliente:** {infos_nota['cliente']} \n\n **Destino:** {infos_nota['cidade']} - {infos_nota['uf']} | **Transportadora:** {infos_nota['transportadora']}")
+    
     st.write("Insira as quantidades dos itens que retornarão ao estoque:")
     
     espelho_itens = []
     valor_liquido_total = 0.0
     icms_normal_total = 0.0
+    quantidade_total_pecas = 0.0
     
     with st.container():
         for index, linha in df_produtos.iterrows():
@@ -116,7 +160,6 @@ if nf_origem:
             icms_orig = linha['ICMS Original']
             desconto_orig = linha['Desconto']
             
-            # Campo numérico ajustado para capturar corretamente a quantidade inteira/decimal
             qtd_dev = st.number_input(
                 f"📦 {nome} (Qtd. na NF: {int(qtd_orig)})", 
                 min_value=0.0, 
@@ -136,6 +179,7 @@ if nf_origem:
                 
                 valor_liquido_total += vl_liq_item
                 icms_normal_total += icms_item_dev
+                quantidade_total_pecas += qtd_dev  # Soma correta do volume total de unidades
                 
                 espelho_itens.append({
                     "PRODUTO": nome,
@@ -160,7 +204,7 @@ if nf_origem:
         
         col_t1, col_t2, col_t3 = st.columns(3)
         with col_t1:
-            st.metric(label="Volume de Itens Diferentes", value=len(espelho_itens))
+            st.metric(label="Volume Total de Unidades", value=int(quantidade_total_pecas))
         with col_t2:
             st.metric(label="Total de ICMS Calculado", value=f"R$ {icms_normal_total:.2f}")
         with col_t3:
@@ -168,11 +212,11 @@ if nf_origem:
         
         st.markdown("---")
         
-        pdf_pronto = gerar_pdf(df_final, numero_nota, valor_liquido_total, icms_normal_total)
+        pdf_pronto = gerar_pdf(df_final, infos_nota, valor_liquido_total, icms_normal_total)
         st.download_button(
             label="📄 Emitir Pré-Nota em PDF",
             data=pdf_pronto,
-            file_name=f"Pre_Nota_Devolucao_{numero_nota}.pdf",
+            file_name=f"Pre_Nota_Devolucao_{infos_nota['numero_nota']}.pdf",
             mime="application/pdf",
             type="primary"
         )
