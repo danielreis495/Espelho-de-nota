@@ -42,7 +42,7 @@ if not verificar_autenticacao():
     st.stop()
 
 # -------------------------------------------------------------------------
-# 2. LÓGICA DE LEITURA INDIVIDUAL DE CADA XML
+# 2. LÓGICA DE LEITURA INDIVIDUAL DE CADA XML (COM CAPTURA DE IPI)
 # -------------------------------------------------------------------------
 
 def limpar_namespace(tag):
@@ -87,7 +87,7 @@ def processar_unico_xml(arquivo_xml):
         if limpar_namespace(det.tag) == 'det':
             prod_info = {
                 'Nome': '', 'Qtd Original': 0.0, 'Valor Unitário': 0.0, 
-                'Valor Total Item': 0.0, 'Desconto': 0.0, 'ICMS Original': 0.0
+                'Valor Total Item': 0.0, 'Desconto': 0.0, 'ICMS Original': 0.0, 'IPI Original': 0.0
             }
             
             for prod in det.iter():
@@ -98,10 +98,13 @@ def processar_unico_xml(arquivo_xml):
                 elif tag == 'vProd': prod_info['Valor Total Item'] = float(prod.text)
                 elif tag == 'vDesc': prod_info['Desconto'] = float(prod.text)
             
+            # Captura ICMS e IPI específicos do item
             for imposto in det.iter():
                 tag = limpar_namespace(imposto.tag)
                 if tag == 'vICMS':
                     prod_info['ICMS Original'] += float(imposto.text)
+                elif tag == 'vIPI':
+                    prod_info['IPI Original'] += float(imposto.text)
             
             prod_info['Valor Base'] = prod_info['Valor Total Item'] - prod_info['Desconto']
             produtos.append(prod_info)
@@ -120,7 +123,7 @@ def processar_unico_xml(arquivo_xml):
 # 3. GERADOR DE PDF INDIVIDUAL
 # -------------------------------------------------------------------------
 
-def gerar_pdf(df, infos, valor_liq_total, icms_total, data_emissao, usuario_gerador):
+def gerar_pdf(df, infos, valor_liq_total, icms_total, ipi_total, data_emissao, usuario_gerador):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
@@ -138,7 +141,7 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, data_emissao, usuario_gera
     pdf.ln(4)
     
     pdf.set_font("Arial", 'B', 8)
-    larguras = [70, 15, 25, 30, 25, 25, 30, 25]
+    larguras = [65, 12, 22, 25, 25, 22, 22, 25, 22, 17]
     colunas = df.columns.tolist()
     
     pdf.set_fill_color(240, 240, 240)
@@ -149,7 +152,7 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, data_emissao, usuario_gera
     pdf.set_font("Arial", size=8)
     for index, row in df.iterrows():
         for i, item in enumerate(row):
-            texto = f"{item:.2f}" if isinstance(item, (int, float)) else str(item)[:35]
+            texto = f"{item:.2f}" if isinstance(item, (int, float)) else str(item)[:30]
             pdf.cell(larguras[i], 6, txt=texto, border=1, align='C')
         pdf.ln()
         
@@ -159,7 +162,8 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, data_emissao, usuario_gera
     pdf.cell(0, 6, "TOTAIS DA DEVOLUÇÃO:", ln=True)
     pdf.set_font("Arial", size=9)
     pdf.cell(0, 6, f"Total de ICMS Calculado: R$ {icms_total:.2f}", ln=True)
-    pdf.cell(0, 6, f"VALOR LÍQUIDO TOTAL DA DEVOLUÇÃO: R$ {valor_liq_total:.2f}", ln=True)
+    pdf.cell(0, 6, f"Total de IPI Calculado: R$ {ipi_total:.2f}", ln=True)
+    pdf.cell(0, 6, f"VALOR LÍQUIDO TOTAL DA DEVOLUÇÃO (Com IPI): R$ {valor_liq_total:.2f}", ln=True)
     pdf.ln(4)
     
     pdf.set_draw_color(0, 51, 102)
@@ -184,7 +188,7 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, data_emissao, usuario_gera
             return f.read()
 
 # -------------------------------------------------------------------------
-# 4. INTERFACE PRINCIPAL DO APLICATIVO (MÚLTIPLOS UPLOADS)
+# 4. INTERFACE PRINCIPAL DO APLICATIVO
 # -------------------------------------------------------------------------
 
 st.set_page_config(page_title="Emissão de Devolução - Gross", layout="wide")
@@ -200,7 +204,6 @@ with col_logout:
 
 st.markdown("---")
 
-# Permite subir vários arquivos XML de uma só vez
 arquivos_origem = st.file_uploader("Anexe um ou mais arquivos XML das Notas Fiscais de Origem", type=["xml"], accept_multiple_files=True)
 
 if arquivos_origem:
@@ -210,7 +213,6 @@ if arquivos_origem:
     st.success(f"{len(arquivos_origem)} arquivo(s) XML carregado(s) com sucesso!")
     st.write("Configure abaixo os itens de devolução para cada nota processada:")
 
-    # Laço para tratar cada XML individualmente e gerar sua respectiva pré-nota
     for idx, arquivo in enumerate(arquivos_origem):
         df_produtos, infos_nota = processar_unico_xml(arquivo)
         
@@ -220,6 +222,7 @@ if arquivos_origem:
             espelho_itens = []
             valor_liquido_total = 0.0
             icms_normal_total = 0.0
+            ipi_total = 0.0
             quantidade_total_pecas = 0.0
             
             for index, linha in df_produtos.iterrows():
@@ -228,6 +231,7 @@ if arquivos_origem:
                 v_unit = linha['Valor Unitário']
                 v_base_orig = linha['Valor Base']
                 icms_orig = linha['ICMS Original']
+                ipi_orig = linha['IPI Original']
                 desconto_orig = linha['Desconto']
                 
                 qtd_dev = st.number_input(
@@ -244,12 +248,15 @@ if arquivos_origem:
                     fator_proporcao = qtd_dev / qtd_orig
                     valor_item_dev = qtd_dev * v_unit
                     icms_item_dev = icms_orig * fator_proporcao
+                    ipi_item_dev = ipi_orig * fator_proporcao
                     desconto_item_dev = desconto_orig * fator_proporcao
                     
-                    vl_liq_item = valor_item_dev - desconto_item_dev
+                    # Valor líquido do item agora incorpora o IPI proporcional
+                    vl_liq_item = (valor_item_dev - desconto_item_dev) + ipi_item_dev
                     
                     valor_liquido_total += vl_liq_item
                     icms_normal_total += icms_item_dev
+                    ipi_total += ipi_item_dev
                     quantidade_total_pecas += qtd_dev
                     
                     espelho_itens.append({
@@ -258,9 +265,10 @@ if arquivos_origem:
                         "VL UNIT": v_unit,
                         "DESCONTO": desconto_item_dev,
                         "VL TOTAL": valor_item_dev,
-                        "VL LÍQUIDO": vl_liq_item,
                         "BASE ICMS": v_base_orig * fator_proporcao,
-                        "ICMS": icms_item_dev
+                        "ICMS": icms_item_dev,
+                        "IPI": ipi_item_dev,
+                        "VL LÍQUIDO": vl_liq_item
                     })
 
             if espelho_itens:
@@ -270,16 +278,17 @@ if arquivos_origem:
                 st.markdown(f"**Resumo para a Nota {infos_nota['numero_nota']}**")
                 st.dataframe(df_final.style.format(precision=2), use_container_width=True)
                 
-                col_m1, col_m2, col_m3 = st.columns(3)
+                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
                 with col_m1:
-                    st.metric(label="Total de Unidades", value=int(quantidade_total_pecas))
+                    st.metric(label="Total Unidades", value=int(quantidade_total_pecas))
                 with col_m2:
                     st.metric(label="ICMS Calculado", value=f"R$ {icms_normal_total:.2f}")
                 with col_m3:
+                    st.metric(label="IPI Calculado", value=f"R$ {ipi_total:.2f}")
+                with col_m4:
                     st.metric(label="VALOR LÍQUIDO", value=f"R$ {valor_liquido_total:.2f}")
                 
-                # Botão de PDF exclusivo para esta nota específica
-                pdf_pronto = gerar_pdf(df_final, infos_nota, valor_liquido_total, icms_normal_total, data_atual, st.session_state.usuario_email)
+                pdf_pronto = gerar_pdf(df_final, infos_nota, valor_liquido_total, icms_normal_total, ipi_total, data_atual, st.session_state.usuario_email)
                 st.download_button(
                     label=f"📄 Baixar Pré-Nota da NF {infos_nota['numero_nota']}",
                     data=pdf_pronto,
