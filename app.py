@@ -8,7 +8,7 @@ import tempfile
 def limpar_namespace(tag):
     return tag.split('}')[-1] if '}' in tag else tag
 
-# 2. Leitor do XML: Captura apenas ICMS normal, descontos e número da nota
+# 2. Leitor rigoroso do XML: Extrai apenas o que está declarado na nota
 def processar_xml_nf(arquivo_xml):
     tree = ET.parse(arquivo_xml)
     root = tree.getroot()
@@ -39,32 +39,31 @@ def processar_xml_nf(arquivo_xml):
                 elif tag == 'vProd': prod_info['Valor Total Item'] = float(prod.text)
                 elif tag == 'vDesc': prod_info['Desconto'] = float(prod.text)
             
-            # Captura estritamente o ICMS próprio (normal)
+            # Captura estritamente o ICMS próprio (normal) declarado
             for imposto in det.iter():
                 tag = limpar_namespace(imposto.tag)
                 if tag == 'vICMS':
                     prod_info['ICMS Original'] += float(imposto.text)
             
+            # Valor base real líquido do item (subtraindo desconto real apenas se houver)
             prod_info['Valor Base'] = prod_info['Valor Total Item'] - prod_info['Desconto']
             produtos.append(prod_info)
             
     return pd.DataFrame(produtos), numero_nota
 
-# 3. Gerador de PDF com layout estruturado semelhante à pré-nota
+# 3. Gerador de PDF alinhado aos dados reais
 def gerar_pdf(df, numero_nota, valor_liq_total, icms_total):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    # Cabeçalho do documento
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 8, "SISTEMA DE PRÉ-NOTA DE DEVOLUÇÃO", ln=True, align='C')
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 6, f"Nota Fiscal de Origem Nº: {numero_nota}", ln=True, align='C')
     pdf.ln(5)
     
-    # Tabela de Itens - Cabeçalho
-    pdf.set_font("Arial", 'B', 7)
-    larguras = [45, 12, 18, 18, 18, 15, 18, 22, 22, 18, 15, 20, 20]
+    pdf.set_font("Arial", 'B', 8)
+    larguras = [70, 15, 25, 30, 25, 25, 30, 25]
     colunas = df.columns.tolist()
     
     pdf.set_fill_color(240, 240, 240)
@@ -72,25 +71,19 @@ def gerar_pdf(df, numero_nota, valor_liq_total, icms_total):
         pdf.cell(larguras[i], 7, txt=str(col), border=1, align='C', fill=True)
     pdf.ln()
     
-    # Tabela de Itens - Dados
-    pdf.set_font("Arial", size=7)
+    pdf.set_font("Arial", size=8)
     for index, row in df.iterrows():
         for i, item in enumerate(row):
-            if isinstance(item, (int, float)):
-                texto = f"{item:.2f}"
-            else:
-                texto = str(item)[:22]
+            texto = f"{item:.2f}" if isinstance(item, (int, float)) else str(item)[:35]
             pdf.cell(larguras[i], 6, txt=texto, border=1, align='C')
         pdf.ln()
         
     pdf.ln(5)
-    
-    # Rodapé com os Totais Consolidados
     pdf.set_font("Arial", 'B', 9)
     pdf.cell(0, 6, "TOTAIS DA DEVOLUÇÃO:", ln=True)
     pdf.set_font("Arial", size=9)
     pdf.cell(0, 6, f"Total de ICMS Calculado: R$ {icms_total:.2f}", ln=True)
-    pdf.cell(0, 6, f"VALOR LÍQUIDO TOTAL: R$ {valor_liq_total:.2f}", ln=True)
+    pdf.cell(0, 6, f"VALOR LÍQUIDO TOTAL DA DEVOLUÇÃO: R$ {valor_liq_total:.2f}", ln=True)
     
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         pdf.output(tmp.name)
@@ -126,6 +119,7 @@ if nf_origem:
             v_unit = linha['Valor Unitário']
             v_base_orig = linha['Valor Base']
             icms_orig = linha['ICMS Original']
+            desconto_orig = linha['Desconto']
             
             qtd_dev = st.number_input(f"📦 {nome} (Qtd. na NF: {qtd_orig})", min_value=0.0, max_value=float(qtd_orig), value=0.0, step=1.0)
             
@@ -133,27 +127,22 @@ if nf_origem:
                 fator_proporcao = qtd_dev / qtd_orig
                 valor_item_dev = qtd_dev * v_unit
                 icms_item_dev = icms_orig * fator_proporcao
+                desconto_item_dev = desconto_orig * fator_proporcao
                 
-                repasse = valor_item_dev * 0.8925
-                desc = repasse * 0.08
-                vl_liq = repasse - desc
+                # Valor líquido real baseado estritamente na nota (sem deduções inventadas)
+                vl_liq_item = valor_item_dev - desconto_item_dev
                 
-                valor_liquido_total += vl_liq
+                valor_liquido_total += vl_liq_item
                 icms_normal_total += icms_item_dev
                 
                 espelho_itens.append({
                     "PRODUTO": nome,
                     "QTE": qtd_dev,
                     "VL UNIT": v_unit,
+                    "DESCONTO": desconto_item_dev,
                     "VL TOTAL": valor_item_dev,
-                    "REPASSE": repasse,
-                    "DESC": desc,
-                    "VL LIQ": vl_liq,
-                    "VL UNIT (PMC)": 0.0,
-                    "VL TOTAL(PMC)": 0.0,
-                    "REDUÇÃO": 0.0,
-                    "BASE": v_base_orig * fator_proporcao,
-                    "ALÍQUOTA": 18.0,
+                    "VL LÍQUIDO": vl_liq_item,
+                    "BASE ICMS": v_base_orig * fator_proporcao,
                     "ICMS": icms_item_dev
                 })
 
