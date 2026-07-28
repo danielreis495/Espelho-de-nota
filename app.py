@@ -13,7 +13,9 @@ import os
 USUARIOS_AUTORIZADOS = {
     "daniel.reis@gross.com.br": "gross2026",
     "operacional@gross.com.br": "gross123",
-    "fiscal@gross.com.br": "nfe2026"
+    "fiscal@gross.com.br": "nfe2026",
+    "aryelle.cristine@gross.com.br": "gross2026", # Adicionada conforme solicitado
+    "rute.silva@gross.com.br": "gross2026"       # Adicionada conforme solicitado
 }
 
 def verificar_autenticacao():
@@ -43,28 +45,28 @@ if not verificar_autenticacao():
     st.stop()
 
 # -------------------------------------------------------------------------
-# 2. CONTROLE AUTOMÁTICO DE HISTÓRICO (CSV SEGURO)
+# 2. CONTROLE AUTOMÁTICO DE HISTÓRICO (CONTADOR DE PRÉ-NOTAS GERADAS)
 # -------------------------------------------------------------------------
-ARQUIVO_HISTORICO = "historico_notas.csv"
+ARQUIVO_HISTORICO = "historico_pre_notas.csv"
 
-def registrar_nota_automaticamente(numero_nota, data_emissao_xml, operador):
+def registrar_pre_nota_gerada(numero_nota, operador):
     if not os.path.exists(ARQUIVO_HISTORICO):
-        df_hist = pd.DataFrame(columns=["Nota", "Data", "Operador", "Ano", "Mês"])
+        df_hist = pd.DataFrame(columns=["Nota", "DataGeracao", "Operador", "Ano", "Mês"])
         df_hist.to_csv(ARQUIVO_HISTORICO, index=False)
     
     df_hist = pd.read_csv(ARQUIVO_HISTORICO)
+    data_hoje = datetime.now().strftime("%Y-%m-%d")
     
-    if str(numero_nota) not in df_hist["Nota"].astype(str).values:
-        data_obj = datetime.strptime(data_emissao_xml[:10], "%Y-%m-%d")
-        novo = pd.DataFrame([{
-            "Nota": str(numero_nota),
-            "Data": data_obj.strftime("%Y-%m-%d"),
-            "Operador": operador,
-            "Ano": data_obj.strftime("%Y"),
-            "Mês": data_obj.strftime("%Y-%m")
-        }])
-        df_hist = pd.concat([df_hist, novo], ignore_index=True)
-        df_hist.to_csv(ARQUIVO_HISTORICO, index=False)
+    # Registra cada emissão de pré-nota com a data atual da geração
+    novo = pd.DataFrame([{
+        "Nota": str(numero_nota),
+        "DataGeracao": data_hoje,
+        "Operador": operador,
+        "Ano": datetime.now().strftime("%Y"),
+        "Mês": datetime.now().strftime("%Y-%m")
+    }])
+    df_hist = pd.concat([df_hist, novo], ignore_index=True)
+    df_hist.to_csv(ARQUIVO_HISTORICO, index=False)
 
 # -------------------------------------------------------------------------
 # 3. LÓGICA DE LEITURA DO XML
@@ -78,7 +80,6 @@ def processar_unico_xml(arquivo_xml):
     root = tree.getroot()
     
     numero_nota = "Não encontrado"
-    data_emissao = datetime.now().strftime("%Y-%m-%d")
     cliente_nome = "Não informado"
     cidade = ""
     uf = ""
@@ -88,11 +89,8 @@ def processar_unico_xml(arquivo_xml):
     for ide in root.iter():
         if limpar_namespace(ide.tag) == 'ide':
             for sub in ide.iter():
-                tag = limpar_namespace(sub.tag)
-                if tag == 'nNF':
+                if limpar_namespace(sub.tag) == 'nNF':
                     numero_nota = sub.text
-                elif tag == 'dhEmi':
-                    data_emissao = sub.text
             break
             
     for dest in root.iter():
@@ -138,7 +136,6 @@ def processar_unico_xml(arquivo_xml):
             
     infos_nota = {
         "numero_nota": numero_nota,
-        "data_emissao": data_emissao,
         "cliente": cliente_nome,
         "cidade": cidade,
         "uf": uf,
@@ -148,7 +145,7 @@ def processar_unico_xml(arquivo_xml):
     return pd.DataFrame(produtos), infos_nota
 
 # -------------------------------------------------------------------------
-# 4. GERADOR DE PDF INDIVIDUAL
+# 4. GERADOR DE PDF E SALVAMENTO NA REDE
 # -------------------------------------------------------------------------
 
 def gerar_pdf(df, infos, valor_liq_total, icms_total, ipi_total, data_geracao, usuario_gerador):
@@ -210,10 +207,20 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, ipi_total, data_geracao, u
     pdf.set_x(12)
     pdf.cell(0, 4, f"Data de Emissao: {data_geracao} | Operador: {usuario_gerador}", ln=True)
     
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        pdf.output(tmp.name)
-        with open(tmp.name, "rb") as f:
-            return f.read()
+    # Gera bytes do PDF
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    
+    # Tenta salvar automaticamente na pasta de rede compartilhada (se o caminho estiver acessível)
+    pasta_rede = r"R:\Financeiro\Tesouraria\PRE NOTAS"
+    try:
+        if os.path.exists(pasta_rede):
+            caminho_arquivo = os.path.join(pasta_rede, f"Pre_Nota_Devolucao_{infos['numero_nota']}.pdf")
+            with open(caminho_arquivo, "wb") as f_rede:
+                f_rede.write(pdf_bytes)
+    except Exception as e:
+        print(f"Não foi possível salvar na rede automaticamente: {e}")
+
+    return pdf_bytes
 
 # ---------------------------------------------------------
 # 5. INTERFACE PRINCIPAL
@@ -235,20 +242,24 @@ st.markdown("---")
 aba_emissao, aba_relatorios = st.tabs(["Emissão de Pré-Notas", "📊 Histórico e Contador Automático"])
 
 with aba_emissao:
-    # Botão rápido para limpar os XMLs da tela sem tocar no histórico gerencial
     col_up1, col_up2 = st.columns([4, 1])
     with col_up1:
         st.subheader("Carregar Documentos Fiscais")
     with col_up2:
-        if st.button("🗑️ Limpar XMLs da Tela", type="secondary"):
-            # Limpa o widget de upload forçando a recriação da página
+        # Botão corrigido para limpar os arquivos do uploader instantaneamente
+        if st.button("🗑️ Limpar XMLs", type="secondary"):
+            st.session_state.pop("uploader_xmls", None)
             st.rerun()
 
-    arquivos_origem = st.file_uploader("Anexe um ou mais arquivos XML das Notas Fiscais de Origem", type=["xml"], accept_multiple_files=True, key="uploader_xmls")
+    arquivos_origem = st.file_uploader(
+        "Anexe um ou mais arquivos XML das Notas Fiscais de Origem", 
+        type=["xml"], 
+        accept_multiple_files=True, 
+        key="uploader_xmls"
+    )
 
     if arquivos_origem:
         data_atual = datetime.now().strftime("%d/%m/%Y")
-        data_hora_completa = datetime.now().strftime("%d/%m/%Y às %H:%M:%S")
         
         st.success(f"{len(arquivos_origem)} arquivo(s) XML carregado(s) com sucesso!")
         st.write("Configure abaixo os itens de devolução para cada nota processada:")
@@ -327,52 +338,52 @@ with aba_emissao:
                     with col_m4:
                         st.metric(label="VALOR LÍQUIDO", value=f"R$ {valor_liquido_total:.2f}")
                     
-                    # Salva automaticamente no contador de notas ao emitir o PDF
-                    registrar_nota_automaticamente(infos_nota['numero_nota'], infos_nota['data_emissao'], st.session_state.usuario_email)
-                    
                     pdf_pronto = gerar_pdf(df_final, infos_nota, valor_liquido_total, icms_normal_total, ipi_total, data_atual, st.session_state.usuario_email)
-                    st.download_button(
+                    
+                    # Botão que gera o download e registra a pré-nota no contador automático
+                    if st.download_button(
                         label=f"📄 Baixar Pré-Nota da NF {infos_nota['numero_nota']}",
                         data=pdf_pronto,
                         file_name=f"Pre_Nota_Devolucao_{infos_nota['numero_nota']}.pdf",
                         mime="application/pdf",
                         key=f"btn_pdf_{idx}",
                         type="primary"
-                    )
+                    ):
+                        registrar_pre_nota_gerada(infos_nota['numero_nota'], st.session_state.usuario_email)
                 else:
                     st.info("Insira a quantidade de pelo menos um item acima para liberar a pré-nota desta nota fiscal.")
 
 with aba_relatorios:
-    st.subheader("📈 Painel de Controle e Contagem Automática")
+    st.subheader("📈 Painel de Controle e Contagem Automática de Pré-Notas Geradas")
     
     if os.path.exists(ARQUIVO_HISTORICO):
         df_hist = pd.read_csv(ARQUIVO_HISTORICO)
         
         if not df_hist.empty:
-            tab_d, tab_m, tab_a, tab_g = st.tabs(["Visão Diária", "Visão Mensal", "Visão Anual", "Notas Registradas"])
+            tab_d, tab_m, tab_a, tab_g = st.tabs(["Visão Diária", "Visão Mensal", "Visão Anual", "Pré-Notas Registradas"])
             
             with tab_d:
-                st.markdown("### Quantidade de Notas por Dia")
-                df_dia = df_hist.groupby("Data")["Nota"].count().reset_index().rename(columns={"Nota": "Total de Notas"})
+                st.markdown("### Quantidade de Pré-Notas Geradas por Dia")
+                df_dia = df_hist.groupby("DataGeracao")["Nota"].count().reset_index().rename(columns={"Nota": "Total Pré-Notas Geradas", "DataGeracao": "Data"})
                 st.dataframe(df_dia, use_container_width=True)
                 st.bar_chart(df_dia.set_index("Data"))
                 
             with tab_m:
-                st.markdown("### Quantidade de Notas por Mês")
-                df_mes = df_hist.groupby("Mês")["Nota"].count().reset_index().rename(columns={"Nota": "Total de Notas"})
+                st.markdown("### Quantidade de Pré-Notas Geradas por Mês")
+                df_mes = df_hist.groupby("Mês")["Nota"].count().reset_index().rename(columns={"Nota": "Total Pré-Notas Geradas"})
                 st.dataframe(df_mes, use_container_width=True)
                 st.bar_chart(df_mes.set_index("Mês"))
                 
             with tab_a:
-                st.markdown("### Quantidade de Notas por Ano")
-                df_ano = df_hist.groupby("Ano")["Nota"].count().reset_index().rename(columns={"Nota": "Total de Notas"})
+                st.markdown("### Quantidade de Pré-Notas Geradas por Ano")
+                df_ano = df_hist.groupby("Ano")["Nota"].count().reset_index().rename(columns={"Nota": "Total Pré-Notas Geradas"})
                 st.dataframe(df_ano, use_container_width=True)
                 st.bar_chart(df_ano.set_index("Ano"))
                 
             with tab_g:
-                st.markdown("### Histórico Completo de Notas Emitidas")
+                st.markdown("### Histórico Completo de Pré-Notas Emitidas")
                 st.dataframe(df_hist, use_container_width=True)
         else:
-            st.info("Nenhuma nota gerada automaticamente ainda. Faça o download de uma pré-nota na aba anterior para registrar.")
+            st.info("Nenhuma pré-nota gerada ainda.")
     else:
-        st.info("O histórico está vazio. As notas serão contabilizadas automaticamente assim que você emitir as primeiras pré-notas.")
+        st.info("O histórico está vazio. As pré-notas serão contabilizadas automaticamente assim que você clicar em baixar os PDFs.")
