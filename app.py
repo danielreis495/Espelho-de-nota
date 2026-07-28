@@ -4,11 +4,11 @@ import pandas as pd
 from fpdf import FPDF
 import tempfile
 
-# Função para remover as tags complexas do XML
+# 1. Função para remover os namespaces do XML
 def limpar_namespace(tag):
     return tag.split('}')[-1] if '}' in tag else tag
 
-# Leitor avançado: Captura descontos, ICMS-ST e Número da Nota
+# 2. Leitor do XML: Captura apenas ICMS normal, descontos e número da nota
 def processar_xml_nf(arquivo_xml):
     tree = ET.parse(arquivo_xml)
     root = tree.getroot()
@@ -39,9 +39,10 @@ def processar_xml_nf(arquivo_xml):
                 elif tag == 'vProd': prod_info['Valor Total Item'] = float(prod.text)
                 elif tag == 'vDesc': prod_info['Desconto'] = float(prod.text)
             
+            # Captura estritamente o ICMS próprio (normal)
             for imposto in det.iter():
                 tag = limpar_namespace(imposto.tag)
-                if tag in ['vICMS', 'vICMSST']:
+                if tag == 'vICMS':
                     prod_info['ICMS Original'] += float(imposto.text)
             
             prod_info['Valor Base'] = prod_info['Valor Total Item'] - prod_info['Desconto']
@@ -49,41 +50,58 @@ def processar_xml_nf(arquivo_xml):
             
     return pd.DataFrame(produtos), numero_nota
 
-# Função para desenhar o arquivo PDF
-def gerar_pdf(df, numero_nota):
+# 3. Gerador de PDF com layout estruturado semelhante à pré-nota
+def gerar_pdf(df, numero_nota, valor_liq_total, icms_total):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"PRÉ-NOTA DE DEVOLUÇÃO - DOC: {numero_nota}", ln=True, align='C')
-    pdf.ln(5) 
+    # Cabeçalho do documento
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 8, "SISTEMA DE PRÉ-NOTA DE DEVOLUÇÃO", ln=True, align='C')
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 6, f"Nota Fiscal de Origem Nº: {numero_nota}", ln=True, align='C')
+    pdf.ln(5)
     
+    # Tabela de Itens - Cabeçalho
     pdf.set_font("Arial", 'B', 7)
-    larguras = [40, 12, 18, 18, 18, 15, 18, 22, 22, 18, 15, 20, 20]
+    larguras = [45, 12, 18, 18, 18, 15, 18, 22, 22, 18, 15, 20, 20]
     colunas = df.columns.tolist()
     
+    pdf.set_fill_color(240, 240, 240)
     for i, col in enumerate(colunas):
-        pdf.cell(larguras[i], 8, txt=str(col), border=1, align='C')
+        pdf.cell(larguras[i], 7, txt=str(col), border=1, align='C', fill=True)
     pdf.ln()
     
+    # Tabela de Itens - Dados
     pdf.set_font("Arial", size=7)
     for index, row in df.iterrows():
         for i, item in enumerate(row):
-            texto = f"{item:.2f}" if isinstance(item, (int, float)) else str(item)[:22]
-            pdf.cell(larguras[i], 8, txt=texto, border=1, align='C')
+            if isinstance(item, (int, float)):
+                texto = f"{item:.2f}"
+            else:
+                texto = str(item)[:22]
+            pdf.cell(larguras[i], 6, txt=texto, border=1, align='C')
         pdf.ln()
+        
+    pdf.ln(5)
+    
+    # Rodapé com os Totais Consolidados
+    pdf.set_font("Arial", 'B', 9)
+    pdf.cell(0, 6, "TOTAIS DA DEVOLUÇÃO:", ln=True)
+    pdf.set_font("Arial", size=9)
+    pdf.cell(0, 6, f"Total de ICMS Calculado: R$ {icms_total:.2f}", ln=True)
+    pdf.cell(0, 6, f"VALOR LÍQUIDO TOTAL: R$ {valor_liq_total:.2f}", ln=True)
     
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         pdf.output(tmp.name)
         with open(tmp.name, "rb") as f:
             return f.read()
 
-# Construção da Interface do Usuário (Layout Pré-Nota)
+# 4. Interface Web do Aplicativo
 st.set_page_config(page_title="Emissão de Devolução", layout="wide")
 st.title("📄 Sistema de Pré-Nota de Devolução")
 st.markdown("---")
 
-# Seção de Upload
 col1, col2 = st.columns(2)
 with col1:
     nf_origem = st.file_uploader("1. Anexe o XML da Nota Fiscal de Origem", type=["xml"])
@@ -98,12 +116,9 @@ if nf_origem:
     st.write("Insira as quantidades dos itens que retornarão ao estoque:")
     
     espelho_itens = []
-    
-    # Variáveis para somar os totais da nota
     valor_liquido_total = 0.0
-    icms_st_total = 0.0
+    icms_normal_total = 0.0
     
-    # Corpo da Nota: Seleção de Produtos
     with st.container():
         for index, linha in df_produtos.iterrows():
             nome = linha['Nome']
@@ -123,9 +138,8 @@ if nf_origem:
                 desc = repasse * 0.08
                 vl_liq = repasse - desc
                 
-                # Incrementando os totais gerais da nota
                 valor_liquido_total += vl_liq
-                icms_st_total += icms_item_dev
+                icms_normal_total += icms_item_dev
                 
                 espelho_itens.append({
                     "PRODUTO": nome,
@@ -140,10 +154,9 @@ if nf_origem:
                     "REDUÇÃO": 0.0,
                     "BASE": v_base_orig * fator_proporcao,
                     "ALÍQUOTA": 18.0,
-                    "ICMS ST": icms_item_dev
+                    "ICMS": icms_item_dev
                 })
 
-    # Rodapé: Exibição da Tabela e Totais
     if espelho_itens:
         df_final = pd.DataFrame(espelho_itens)
         
@@ -154,23 +167,21 @@ if nf_origem:
         st.markdown("---")
         st.markdown("### Totais da Devolução")
         
-        # Painel contábil dividido em 3 colunas
         col_t1, col_t2, col_t3 = st.columns(3)
         with col_t1:
             st.metric(label="Volume de Itens Diferentes", value=len(espelho_itens))
         with col_t2:
-            st.metric(label="Total de ICMS-ST Calculado", value=f"R$ {icms_st_total:.2f}")
+            st.metric(label="Total de ICMS Calculado", value=f"R$ {icms_normal_total:.2f}")
         with col_t3:
             st.metric(label="VALOR LÍQUIDO TOTAL", value=f"R$ {valor_liquido_total:.2f}")
         
         st.markdown("---")
         
-        # Botão destacado
-        pdf_pronto = gerar_pdf(df_final, numero_nota)
+        pdf_pronto = gerar_pdf(df_final, numero_nota, valor_liquido_total, icms_normal_total)
         st.download_button(
             label="📄 Emitir Pré-Nota em PDF",
             data=pdf_pronto,
             file_name=f"Pre_Nota_Devolucao_{numero_nota}.pdf",
             mime="application/pdf",
-            type="primary" 
+            type="primary"
         )
