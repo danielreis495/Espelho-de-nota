@@ -9,11 +9,10 @@ from datetime import datetime
 # 1. SISTEMA DE LOGIN E AUTENTICAÇÃO POR E-MAIL E SENHA
 # -------------------------------------------------------------------------
 
-# Base de dados simples de usuários autorizados da Gross
 USUARIOS_AUTORIZADOS = {
     "daniel.reis@gross.com.br": "gross2026",
-    "rute.silva@gross.com.br": "gross123",
-    "aryelle.cristine@gross.com.br": "nfe2026"
+    "operacional@gross.com.br": "gross123",
+    "fiscal@gross.com.br": "nfe2026"
 }
 
 def verificar_autenticacao():
@@ -30,7 +29,6 @@ def verificar_autenticacao():
         senha_input = st.text_input("Senha", type="password")
         
         if st.button("Entrar", type="primary"):
-            # Valida se o e-mail existe e se a senha confere
             if email_input in USUARIOS_AUTORIZADOS and USUARIOS_AUTORIZADOS[email_input] == senha_input:
                 st.session_state.autenticado = True
                 st.session_state.usuario_email = email_input
@@ -40,7 +38,6 @@ def verificar_autenticacao():
         return False
     return True
 
-# Interrompe a execução caso não esteja logado
 if not verificar_autenticacao():
     st.stop()
 
@@ -120,10 +117,10 @@ def processar_xml_nf(arquivo_xml):
     return pd.DataFrame(produtos), infos_nota
 
 # -------------------------------------------------------------------------
-# 3. GERADOR DE PDF COM O CARIMBO OFICIAL E IDENTIFICAÇÃO DO USUÁRIO
+# 3. GERADOR DE PDF COM APENAS A DATA NO CARIMBO OFICIAL
 # -------------------------------------------------------------------------
 
-def gerar_pdf(df, infos, valor_liq_total, icms_total, data_geracao, usuario_gerador):
+def gerar_pdf(df, infos, valor_liq_total, icms_total, data_emissao, usuario_gerador):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
@@ -133,7 +130,7 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, data_geracao, usuario_gera
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 6, f"Nota Fiscal de Origem Nº: {infos['numero_nota']}", ln=True, align='C')
     pdf.set_font("Arial", size=8)
-    pdf.cell(0, 5, f"Data de Emissão: {data_geracao}", ln=True, align='C')
+    pdf.cell(0, 5, f"Data de Emissão: {data_emissao}", ln=True, align='C')
     pdf.ln(3)
     
     # Bloco de Informações
@@ -169,7 +166,7 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, data_geracao, usuario_gera
     pdf.cell(0, 6, f"VALOR LÍQUIDO TOTAL DA DEVOLUÇÃO: R$ {valor_liq_total:.2f}", ln=True)
     pdf.ln(4)
     
-    # Carimbo de Autenticação Oficial (Laboratório Gross + Data + E-mail do usuário)
+    # Carimbo de Autenticação Oficial (Com apenas a data, sem hora)
     pdf.set_draw_color(0, 51, 102)
     pdf.set_fill_color(245, 247, 250)
     pdf.rect(10, pdf.get_y(), 277, 22, style='DF')
@@ -184,7 +181,7 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, data_geracao, usuario_gera
     pdf.set_text_color(50, 50, 50)
     pdf.cell(0, 4, f"Emitido e validado eletronicamente pelo sistema interno.", ln=True)
     pdf.set_x(12)
-    pdf.cell(0, 4, f"Data de Emissao: {data_apenas} | Operador Responsável: {usuario_gerador}", ln=True)
+    pdf.cell(0, 4, f"Data de Emissao: {data_emissao} | Operador: {usuario_gerador}", ln=True)
     
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         pdf.output(tmp.name)
@@ -215,9 +212,10 @@ if nf_origem:
     
     st.success("Documento processado com sucesso!")
     
-    data_hora_atual = datetime.now().strftime("%d/%m/%Y às %H:%M:%S")
+    data_atual = datetime.now().strftime("%d/%m/%Y")
+    data_hora_completa = datetime.now().strftime("%d/%m/%Y às %H:%M:%S")
     
-    st.markdown(f"#### Nota Fiscal Nº `{infos_nota['numero_nota']}` | Gerado em: `{data_hora_atual}`")
+    st.markdown(f"#### Nota Fiscal Nº `{infos_nota['numero_nota']}` | Gerado em: `{data_hora_completa}`")
     st.info(f"**Cliente:** {infos_nota['cliente']} \n\n **Destino:** {infos_nota['cidade']} - {infos_nota['uf']} | **Transportadora:** {infos_nota['transportadora']}")
     
     st.write("Insira as quantidades dos itens que retornarão ao estoque:")
@@ -288,7 +286,7 @@ if nf_origem:
         
         st.markdown("---")
         
-        pdf_pronto = gerar_pdf(df_final, infos_nota, valor_liquido_total, icms_normal_total, data_hora_atual, st.session_state.usuario_email)
+        pdf_pronto = gerar_pdf(df_final, infos_nota, valor_liquido_total, icms_normal_total, data_atual, st.session_state.usuario_email)
         st.download_button(
             label="📄 Emitir Pré-Nota em PDF",
             data=pdf_pronto,
