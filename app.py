@@ -184,7 +184,7 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, data_geracao, usuario_gera
     pdf.set_text_color(50, 50, 50)
     pdf.cell(0, 4, f"Emitido e validado eletronicamente pelo sistema interno.", ln=True)
     pdf.set_x(12)
-    pdf.cell(0, 4, f"Data/Hora: {data_geracao} | Operador Responsável: {usuario_gerador}", ln=True)
+    pdf.cell(0, 4, f"Data de Emissao: {data_apenas} | Operador Responsável: {usuario_gerador}", ln=True)
     
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         pdf.output(tmp.name)
