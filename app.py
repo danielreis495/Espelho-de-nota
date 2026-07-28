@@ -43,7 +43,7 @@ if not verificar_autenticacao():
     st.stop()
 
 # -------------------------------------------------------------------------
-# 2. CONTROLE AUTOMÁTICO DE HISTÓRICO (CSV)
+# 2. CONTROLE AUTOMÁTICO DE HISTÓRICO (CSV SEGURO)
 # -------------------------------------------------------------------------
 ARQUIVO_HISTORICO = "historico_notas.csv"
 
@@ -54,7 +54,6 @@ def registrar_nota_automaticamente(numero_nota, data_emissao_xml, operador):
     
     df_hist = pd.read_csv(ARQUIVO_HISTORICO)
     
-    # Evita duplicar se a mesma nota já foi registrada antes
     if str(numero_nota) not in df_hist["Nota"].astype(str).values:
         data_obj = datetime.strptime(data_emissao_xml[:10], "%Y-%m-%d")
         novo = pd.DataFrame([{
@@ -68,7 +67,7 @@ def registrar_nota_automaticamente(numero_nota, data_emissao_xml, operador):
         df_hist.to_csv(ARQUIVO_HISTORICO, index=False)
 
 # -------------------------------------------------------------------------
-# 3. LÓGICA DE LEITURA DO XML (COM DATA E IPI)
+# 3. LÓGICA DE LEITURA DO XML
 # -------------------------------------------------------------------------
 
 def limpar_namespace(tag):
@@ -233,11 +232,19 @@ with col_logout:
 
 st.markdown("---")
 
-# Abas para separar a emissão do painel de contagem
 aba_emissao, aba_relatorios = st.tabs(["Emissão de Pré-Notas", "📊 Histórico e Contador Automático"])
 
 with aba_emissao:
-    arquivos_origem = st.file_uploader("Anexe um ou mais arquivos XML das Notas Fiscais de Origem", type=["xml"], accept_multiple_files=True)
+    # Botão rápido para limpar os XMLs da tela sem tocar no histórico gerencial
+    col_up1, col_up2 = st.columns([4, 1])
+    with col_up1:
+        st.subheader("Carregar Documentos Fiscais")
+    with col_up2:
+        if st.button("🗑️ Limpar XMLs da Tela", type="secondary"):
+            # Limpa o widget de upload forçando a recriação da página
+            st.rerun()
+
+    arquivos_origem = st.file_uploader("Anexe um ou mais arquivos XML das Notas Fiscais de Origem", type=["xml"], accept_multiple_files=True, key="uploader_xmls")
 
     if arquivos_origem:
         data_atual = datetime.now().strftime("%d/%m/%Y")
