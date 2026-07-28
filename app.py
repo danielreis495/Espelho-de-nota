@@ -3,30 +3,45 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 from fpdf import FPDF
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 # -------------------------------------------------------------------------
-# 1. SISTEMA DE LOGIN E AUTENTICAÇÃO POR E-MAIL E SENHA
+# 1. SISTEMA DE LOGIN COM PERMANÊNCIA DE 3 DIAS
 # -------------------------------------------------------------------------
 
 USUARIOS_AUTORIZADOS = {
     "daniel.reis@gross.com.br": "gross2026",
     "operacional@gross.com.br": "gross123",
     "fiscal@gross.com.br": "nfe2026",
-    "aryelle.cristine@gross.com.br": "gross2026", # Adicionada conforme solicitado
-    "rute.silva@gross.com.br": "gross2026"       # Adicionada conforme solicitado
+    "aryelle.cristine@gross.com.br": "gross2026",
+    "rute.silva@gross.com.br": "gross2026"
 }
 
 def verificar_autenticacao():
+    # Inicializa as variáveis de controle no session_state
     if 'autenticado' not in st.session_state:
         st.session_state.autenticado = False
+    if 'usuario_email' not in st.session_state:
         st.session_state.usuario_email = ""
+    if 'tempo_login' not in st.session_state:
+        st.session_state.tempo_login = None
 
+    # Verifica se a sessão expirou (se passaram mais de 3 dias)
+    if st.session_state.autenticado and st.session_state.tempo_login:
+        tempo_decorrido = datetime.now() - st.session_state.tempo_login
+        if tempo_decorrido > timedelta(days=3):
+            # Passou de 3 dias: derruba a sessão
+            st.session_state.autenticado = False
+            st.session_state.usuario_email = ""
+            st.session_state.tempo_login = None
+            st.warning("Sua sessão expirou após 3 dias. Por favor, faça login novamente.")
+
+    # Se não estiver autenticado, exibe a tela de login
     if not st.session_state.autenticado:
         st.set_page_config(page_title="Login - Laboratório Gross", layout="centered")
         st.title("🔒 Laboratório Gross - Acesso Restrito")
-        st.markdown("Insira seu e-mail corporativo e senha para acessar o sistema de pré-notas.")
+        st.markdown("Insira seu e-mail corporativo e senha. Você permanecerá conectado por até 3 dias.")
         
         email_input = st.text_input("E-mail corporativo")
         senha_input = st.text_input("Senha", type="password")
@@ -35,6 +50,7 @@ def verificar_autenticacao():
             if email_input in USUARIOS_AUTORIZADOS and USUARIOS_AUTORIZADOS[email_input] == senha_input:
                 st.session_state.autenticado = True
                 st.session_state.usuario_email = email_input
+                st.session_state.tempo_login = datetime.now() # Registra o momento exato do login
                 st.rerun()
             else:
                 st.error("E-mail ou senha incorretos. Verifique seus dados.")
@@ -57,7 +73,6 @@ def registrar_pre_nota_gerada(numero_nota, operador):
     df_hist = pd.read_csv(ARQUIVO_HISTORICO)
     data_hoje = datetime.now().strftime("%Y-%m-%d")
     
-    # Registra cada emissão de pré-nota com a data atual da geração
     novo = pd.DataFrame([{
         "Nota": str(numero_nota),
         "DataGeracao": data_hoje,
@@ -207,10 +222,8 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, ipi_total, data_geracao, u
     pdf.set_x(12)
     pdf.cell(0, 4, f"Data de Emissao: {data_geracao} | Operador: {usuario_gerador}", ln=True)
     
-    # Gera bytes do PDF
     pdf_bytes = pdf.output(dest='S').encode('latin1')
     
-    # Tenta salvar automaticamente na pasta de rede compartilhada (se o caminho estiver acessível)
     pasta_rede = r"R:\Financeiro\Tesouraria\PRE NOTAS"
     try:
         if os.path.exists(pasta_rede):
@@ -235,6 +248,7 @@ with col_logout:
     st.write(f"👤 *{st.session_state.usuario_email}*")
     if st.button("🚪 Sair"):
         st.session_state.autenticado = False
+        st.session_state.tempo_login = None
         st.rerun()
 
 st.markdown("---")
@@ -246,7 +260,6 @@ with aba_emissao:
     with col_up1:
         st.subheader("Carregar Documentos Fiscais")
     with col_up2:
-        # Botão corrigido para limpar os arquivos do uploader instantaneamente
         if st.button("🗑️ Limpar XMLs", type="secondary"):
             st.session_state.pop("uploader_xmls", None)
             st.rerun()
@@ -340,7 +353,6 @@ with aba_emissao:
                     
                     pdf_pronto = gerar_pdf(df_final, infos_nota, valor_liquido_total, icms_normal_total, ipi_total, data_atual, st.session_state.usuario_email)
                     
-                    # Botão que gera o download e registra a pré-nota no contador automático
                     if st.download_button(
                         label=f"📄 Baixar Pré-Nota da NF {infos_nota['numero_nota']}",
                         data=pdf_pronto,
@@ -378,7 +390,7 @@ with aba_relatorios:
                 st.markdown("### Quantidade de Pré-Notas Geradas por Ano")
                 df_ano = df_hist.groupby("Ano")["Nota"].count().reset_index().rename(columns={"Nota": "Total Pré-Notas Geradas"})
                 st.dataframe(df_ano, use_container_width=True)
-                st.bar_chart(df_ano.set_index("Ano"))
+                st.bar_chart(df_ano.set_index("Data"))
                 
             with tab_g:
                 st.markdown("### Histórico Completo de Pré-Notas Emitidas")
