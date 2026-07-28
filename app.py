@@ -39,13 +39,11 @@ def processar_xml_nf(arquivo_xml):
                 elif tag == 'vProd': prod_info['Valor Total Item'] = float(prod.text)
                 elif tag == 'vDesc': prod_info['Desconto'] = float(prod.text)
             
-            # Captura estritamente o ICMS próprio (normal) declarado
             for imposto in det.iter():
                 tag = limpar_namespace(imposto.tag)
                 if tag == 'vICMS':
                     prod_info['ICMS Original'] += float(imposto.text)
             
-            # Valor base real líquido do item (subtraindo desconto real apenas se houver)
             prod_info['Valor Base'] = prod_info['Valor Total Item'] - prod_info['Desconto']
             produtos.append(prod_info)
             
@@ -95,11 +93,8 @@ st.set_page_config(page_title="Emissão de Devolução", layout="wide")
 st.title("📄 Sistema de Pré-Nota de Devolução")
 st.markdown("---")
 
-col1, col2 = st.columns(2)
-with col1:
-    nf_origem = st.file_uploader("1. Anexe o XML da Nota Fiscal de Origem", type=["xml"])
-with col2:
-    nfd_devolucao = st.file_uploader("2. Anexe o XML da NFD para conferência (Opcional)", type=["xml"])
+# Apenas o upload da nota de origem (campo único)
+nf_origem = st.file_uploader("Anexe o XML da Nota Fiscal de Origem", type=["xml"])
 
 if nf_origem:
     df_produtos, numero_nota = processar_xml_nf(nf_origem)
@@ -121,7 +116,15 @@ if nf_origem:
             icms_orig = linha['ICMS Original']
             desconto_orig = linha['Desconto']
             
-            qtd_dev = st.number_input(f"📦 {nome} (Qtd. na NF: {qtd_orig})", min_value=0.0, max_value=float(qtd_orig), value=0.0, step=1.0)
+            # Campo numérico ajustado para capturar corretamente a quantidade inteira/decimal
+            qtd_dev = st.number_input(
+                f"📦 {nome} (Qtd. na NF: {int(qtd_orig)})", 
+                min_value=0.0, 
+                max_value=float(qtd_orig), 
+                value=0.0, 
+                step=1.0,
+                format="%.0f"
+            )
             
             if qtd_dev > 0:
                 fator_proporcao = qtd_dev / qtd_orig
@@ -129,7 +132,6 @@ if nf_origem:
                 icms_item_dev = icms_orig * fator_proporcao
                 desconto_item_dev = desconto_orig * fator_proporcao
                 
-                # Valor líquido real baseado estritamente na nota (sem deduções inventadas)
                 vl_liq_item = valor_item_dev - desconto_item_dev
                 
                 valor_liquido_total += vl_liq_item
