@@ -3,12 +3,54 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 from fpdf import FPDF
 import tempfile
+from datetime import datetime
 
-# 1. Função para remover os namespaces do XML
+# -------------------------------------------------------------------------
+# 1. SISTEMA DE LOGIN E AUTENTICAÇÃO POR E-MAIL E SENHA
+# -------------------------------------------------------------------------
+
+# Base de dados simples de usuários autorizados da Gross
+USUARIOS_AUTORIZADOS = {
+    "daniel.reis@gross.com.br": "gross2026",
+    "operacional@gross.com.br": "gross123",
+    "fiscal@gross.com.br": "nfe2026"
+}
+
+def verificar_autenticacao():
+    if 'autenticado' not in st.session_state:
+        st.session_state.autenticado = False
+        st.session_state.usuario_email = ""
+
+    if not st.session_state.autenticado:
+        st.set_page_config(page_title="Login - Laboratório Gross", layout="centered")
+        st.title("🔒 Laboratório Gross - Acesso Restrito")
+        st.markdown("Insira seu e-mail corporativo e senha para acessar o sistema de pré-notas.")
+        
+        email_input = st.text_input("E-mail corporativo")
+        senha_input = st.text_input("Senha", type="password")
+        
+        if st.button("Entrar", type="primary"):
+            # Valida se o e-mail existe e se a senha confere
+            if email_input in USUARIOS_AUTORIZADOS and USUARIOS_AUTORIZADOS[email_input] == senha_input:
+                st.session_state.autenticado = True
+                st.session_state.usuario_email = email_input
+                st.rerun()
+            else:
+                st.error("E-mail ou senha incorretos. Verifique seus dados.")
+        return False
+    return True
+
+# Interrompe a execução caso não esteja logado
+if not verificar_autenticacao():
+    st.stop()
+
+# -------------------------------------------------------------------------
+# 2. LÓGICA DE PROCESSAMENTO DO XML
+# -------------------------------------------------------------------------
+
 def limpar_namespace(tag):
     return tag.split('}')[-1] if '}' in tag else tag
 
-# 2. Leitor rigoroso do XML: Extrai dados fiscais, cliente, transporte e produtos
 def processar_xml_nf(arquivo_xml):
     tree = ET.parse(arquivo_xml)
     root = tree.getroot()
@@ -20,7 +62,6 @@ def processar_xml_nf(arquivo_xml):
     transportadora = "Não informada"
     produtos = []
     
-    # Captura o número da nota
     for ide in root.iter():
         if limpar_namespace(ide.tag) == 'ide':
             for nNF in ide.iter():
@@ -29,7 +70,6 @@ def processar_xml_nf(arquivo_xml):
                     break
             break
             
-    # Captura dados do Cliente (Destinatário) e Localidade
     for dest in root.iter():
         if limpar_namespace(dest.tag) == 'dest':
             for sub in dest.iter():
@@ -38,7 +78,6 @@ def processar_xml_nf(arquivo_xml):
                 elif tag == 'xMun': cidade = sub.text
                 elif tag == 'UF': uf = sub.text
                 
-    # Captura dados da Transportadora
     for transp in root.iter():
         if limpar_namespace(transp.tag) == 'transporta':
             for sub in transp.iter():
@@ -47,7 +86,6 @@ def processar_xml_nf(arquivo_xml):
                     break
             break
             
-    # Captura os produtos da nota
     for det in root.iter():
         if limpar_namespace(det.tag) == 'det':
             prod_info = {
@@ -81,19 +119,24 @@ def processar_xml_nf(arquivo_xml):
             
     return pd.DataFrame(produtos), infos_nota
 
-# 3. Gerador de PDF incluindo os dados do cliente e transportadora
-def gerar_pdf(df, infos, valor_liq_total, icms_total):
+# -------------------------------------------------------------------------
+# 3. GERADOR DE PDF COM O CARIMBO OFICIAL E IDENTIFICAÇÃO DO USUÁRIO
+# -------------------------------------------------------------------------
+
+def gerar_pdf(df, infos, valor_liq_total, icms_total, data_geracao, usuario_gerador):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
     # Cabeçalho
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 8, "SISTEMA DE PRÉ-NOTA DE DEVOLUÇÃO", ln=True, align='C')
+    pdf.cell(0, 8, "LABORATÓRIO GROSS S/A - PRÉ-NOTA DE DEVOLUÇÃO", ln=True, align='C')
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 6, f"Nota Fiscal de Origem Nº: {infos['numero_nota']}", ln=True, align='C')
+    pdf.set_font("Arial", size=8)
+    pdf.cell(0, 5, f"Data de Emissão: {data_geracao}", ln=True, align='C')
     pdf.ln(3)
     
-    # Bloco de Informações (Cliente, Destino e Transportadora)
+    # Bloco de Informações
     pdf.set_font("Arial", 'B', 9)
     pdf.cell(0, 5, f"Cliente: {infos['cliente'][:50]}", ln=True)
     pdf.cell(0, 5, f"Destino: {infos['cidade']} - {infos['uf']} | Transportadora: {infos['transportadora']}", ln=True)
@@ -116,21 +159,53 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total):
             pdf.cell(larguras[i], 6, txt=texto, border=1, align='C')
         pdf.ln()
         
-    pdf.ln(5)
+    pdf.ln(4)
+    
+    # Rodapé com Totais
     pdf.set_font("Arial", 'B', 9)
     pdf.cell(0, 6, "TOTAIS DA DEVOLUÇÃO:", ln=True)
     pdf.set_font("Arial", size=9)
     pdf.cell(0, 6, f"Total de ICMS Calculado: R$ {icms_total:.2f}", ln=True)
     pdf.cell(0, 6, f"VALOR LÍQUIDO TOTAL DA DEVOLUÇÃO: R$ {valor_liq_total:.2f}", ln=True)
+    pdf.ln(4)
+    
+    # Carimbo de Autenticação Oficial (Laboratório Gross + Data + E-mail do usuário)
+    pdf.set_draw_color(0, 51, 102)
+    pdf.set_fill_color(245, 247, 250)
+    pdf.rect(10, pdf.get_y(), 277, 22, style='DF')
+    
+    pdf.set_xy(12, pdf.get_y() + 2)
+    pdf.set_font("Arial", 'B', 9)
+    pdf.set_text_color(0, 51, 102)
+    pdf.cell(0, 5, "LABORATORIO GROSS S/A - DOCUMENTO AUTENTICADO", ln=True)
+    
+    pdf.set_x(12)
+    pdf.set_font("Arial", size=8)
+    pdf.set_text_color(50, 50, 50)
+    pdf.cell(0, 4, f"Emitido e validado eletronicamente pelo sistema interno.", ln=True)
+    pdf.set_x(12)
+    pdf.cell(0, 4, f"Data/Hora: {data_geracao} | Operador Responsável: {usuario_gerador}", ln=True)
     
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         pdf.output(tmp.name)
         with open(tmp.name, "rb") as f:
             return f.read()
 
-# 4. Interface Web do Aplicativo
-st.set_page_config(page_title="Emissão de Devolução", layout="wide")
-st.title("📄 Sistema de Pré-Nota de Devolução")
+# -------------------------------------------------------------------------
+# 4. INTERFACE PRINCIPAL DO APLICATIVO
+# -------------------------------------------------------------------------
+
+st.set_page_config(page_title="Emissão de Devolução - Gross", layout="wide")
+
+col_title, col_logout = st.columns([6, 1])
+with col_title:
+    st.title("📄 Sistema de Pré-Nota de Devolução - Gross")
+with col_logout:
+    st.write(f"👤 *{st.session_state.usuario_email}*")
+    if st.button("🚪 Sair"):
+        st.session_state.autenticado = False
+        st.rerun()
+
 st.markdown("---")
 
 nf_origem = st.file_uploader("Anexe o XML da Nota Fiscal de Origem", type=["xml"])
@@ -140,8 +215,9 @@ if nf_origem:
     
     st.success("Documento processado com sucesso!")
     
-    # Exibindo dados organizados na tela
-    st.markdown(f"#### Nota Fiscal Nº `{infos_nota['numero_nota']}`")
+    data_hora_atual = datetime.now().strftime("%d/%m/%Y às %H:%M:%S")
+    
+    st.markdown(f"#### Nota Fiscal Nº `{infos_nota['numero_nota']}` | Gerado em: `{data_hora_atual}`")
     st.info(f"**Cliente:** {infos_nota['cliente']} \n\n **Destino:** {infos_nota['cidade']} - {infos_nota['uf']} | **Transportadora:** {infos_nota['transportadora']}")
     
     st.write("Insira as quantidades dos itens que retornarão ao estoque:")
@@ -179,7 +255,7 @@ if nf_origem:
                 
                 valor_liquido_total += vl_liq_item
                 icms_normal_total += icms_item_dev
-                quantidade_total_pecas += qtd_dev  # Soma correta do volume total de unidades
+                quantidade_total_pecas += qtd_dev
                 
                 espelho_itens.append({
                     "PRODUTO": nome,
@@ -212,7 +288,7 @@ if nf_origem:
         
         st.markdown("---")
         
-        pdf_pronto = gerar_pdf(df_final, infos_nota, valor_liquido_total, icms_normal_total)
+        pdf_pronto = gerar_pdf(df_final, infos_nota, valor_liquido_total, icms_normal_total, data_hora_atual, st.session_state.usuario_email)
         st.download_button(
             label="📄 Emitir Pré-Nota em PDF",
             data=pdf_pronto,
