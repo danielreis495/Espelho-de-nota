@@ -1,3 +1,4 @@
 streamlit
 pandas
 fpdf2
+starlette==0.37.2
