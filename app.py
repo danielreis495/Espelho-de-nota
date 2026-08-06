@@ -56,6 +56,10 @@ def verificar_autenticacao():
 if not verificar_autenticacao():
     st.stop()
 
+# Inicializa a chave dinâmica para resetar o uploader perfeitamente
+if 'uploader_id' not in st.session_state:
+    st.session_state.uploader_id = 0
+
 # -------------------------------------------------------------------------
 # 2. CONTROLE AUTOMÁTICO DE HISTÓRICO (CONTADOR DE PRÉ-NOTAS GERADAS)
 # -------------------------------------------------------------------------
@@ -218,7 +222,8 @@ def gerar_pdf(df, infos, valor_liq_total, icms_total, ipi_total, data_geracao, u
     pdf.set_x(12)
     pdf.cell(0, 4, f"Data de Emissao: {data_geracao} | Operador: {usuario_gerador}", ln=True)
     
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    # Geração correta dos bytes para a biblioteca FPDF2
+    pdf_bytes = bytes(pdf.output())
     
     pasta_rede = r"R:\Financeiro\Tesouraria\PRE NOTAS"
     try:
@@ -257,14 +262,14 @@ with aba_emissao:
         st.subheader("Carregar Documentos Fiscais")
     with col_up2:
         if st.button("🗑️ Limpar XMLs", type="secondary"):
-            st.session_state.pop("uploader_xmls", None)
+            st.session_state.uploader_id += 1
             st.rerun()
 
     arquivos_origem = st.file_uploader(
         "Anexe um ou mais arquivos XML das Notas Fiscais de Origem", 
         type=["xml"], 
         accept_multiple_files=True, 
-        key="uploader_xmls"
+        key=f"uploader_xmls_{st.session_state.uploader_id}"
     )
 
     if arquivos_origem:
@@ -385,7 +390,6 @@ with aba_relatorios:
             with tab_a:
                 st.markdown("### Quantidade de Pré-Notas Geradas por Ano")
                 df_ano = df_hist.groupby("Ano")["Nota"].count().reset_index().rename(columns={"Nota": "Total Pré-Notas Geradas"})
-                # Corrigido para indexar por 'Ano' em vez de 'Data'
                 st.dataframe(df_ano, use_container_width=True)
                 st.bar_chart(df_ano.set_index("Ano"))
                 
